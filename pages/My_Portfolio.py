@@ -7,17 +7,22 @@ from datetime import datetime
 import time
 from pathlib import Path
 
+# --- ROBUST FILE PATH ---
+# Creates a reliable path to portfolio.csv in the parent directory
 PORTFOLIO_FILE = Path(__file__).parent.parent / "portfolio.csv"
 
 # --- HELPER FUNCTIONS ---
-@st.cache_data(ttl=43200) 
+
+@st.cache_data(ttl=1800)  # Cache data for 30 minutes
 def get_position_details(ticker):
-    """Fetches full details for a stock."""
+    """Fetches full details for a stock: price, indicators, and chart data."""
     try:
         stock = yf.Ticker(ticker)
         hist = stock.history(period="1y")
-        if hist.empty: return None
-        
+        if hist.empty:
+            return None
+
+        # Calculate Indicators
         hist['SMA50'] = hist['Close'].rolling(window=50).mean()
         hist['SMA200'] = hist['Close'].rolling(window=200).mean()
         delta = hist['Close'].diff()
@@ -25,21 +30,30 @@ def get_position_details(ticker):
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         rsi = 100 - (100 / (1 + rs))
+        
         latest = hist.iloc[-1]
         
+        # Determine Exit Signal
         signal = "HOLD"
         if latest['RSI'] > 75:
             signal = "SELL SIGNAL: RSI is overbought (> 75)"
         elif latest['SMA50'] < latest['SMA200']:
-            signal = "SELL SIGNAL: Death Cross"
+            signal = "SELL SIGNAL: Death Cross (50-day SMA below 200-day SMA)"
 
-        return { "price": latest['Close'], "rsi": latest['RSI'], "sma50": latest['SMA50'],
-                 "sma200": latest['SMA200'], "signal": signal, "chart_data": hist }
+        return {
+            "price": latest['Close'],
+            "rsi": latest['RSI'],
+            "sma50": latest['SMA50'],
+            "sma200": latest['SMA200'],
+            "signal": signal,
+            "chart_data": hist
+        }
     except Exception as e:
-        print(f"Error fetching details for {ticker}: {e}")
+        print(f"Could not analyze {ticker}: {e}")
         return None
 
 def create_portfolio_chart(data, entry_price):
+    """Creates a detailed Plotly chart for a portfolio holding."""
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=data.index, y=data['Close'], mode='lines', name='Price', line=dict(color='#007BFF')))
     fig.add_trace(go.Scatter(x=data.index, y=data['SMA50'], mode='lines', name='50-Day SMA', line=dict(color='orange', dash='dot')))
@@ -49,11 +63,13 @@ def create_portfolio_chart(data, entry_price):
     return fig
 
 def read_portfolio():
+    """Safely reads the portfolio CSV file with error handling."""
     if not PORTFOLIO_FILE.is_file():
         return pd.DataFrame(columns=['Ticker', 'EntryDate', 'EntryPrice', 'Quantity', 'Status', 'Notes'])
     return pd.read_csv(PORTFOLIO_FILE, encoding='utf-8', encoding_errors='replace')
 
 def save_portfolio(df):
+    """Safely saves the portfolio DataFrame to the CSV file."""
     df.to_csv(PORTFOLIO_FILE, index=False)
 
 def add_manual_holding(ticker, quantity, gav, notes):
@@ -100,15 +116,78 @@ with st.expander("Manually Add Existing Holding"):
 portfolio_df = read_portfolio()
 
 if portfolio_df.empty:
-    st.info("Your portfolio is empty.")
+    st.info("Your portfolio is empty. Add stocks from the 'AI Screener' page or add an existing holding manually.")
 else:
     open_positions = portfolio_df[portfolio_df['Status'] == 'Open'].copy()
+    total_portfolio_value = 0
+
     if not open_positions.empty:
         st.markdown("### Open Positions")
+        
         for index, row in open_positions.iterrows():
+            time.sleep(0.2)  # Add a small delay to be respectful to the API
             details = get_position_details(row['Ticker'])
+            
             if not details:
-                st.warning(f"Could not fetch live data for {row['Ticker']}. The API might be temporarily unavailable. Please try again later.")
+                st.warning(f"Could not fetch data for {row['Ticker']}. The API might be temporarily unavailable. Please try again later.")
                 continue
 
-            # (The rest of the code is unchanged)
+            current_value = details['price'] * row['Quantity']
+            total_portfolio_value += current_value
+            pnl = ((details['price'] / row['EntryPrice']) - 1) * 100 if row['EntryPrice'] > 0 else 0
+            
+            st.markdown("---")
+            st.subheader(f"{row['Ticker']} ({int(row['Quantity'])} shares)")
+
+            if "SELL SIGNAL" in details['signal']:
+                st.error(details['signal'])
+            else:
+                st.success(details['signal'])
+
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Current Value", f"{current_value:,.2f} SEK")
+            col2.metric("GAV / Entry Price", f"{row['EntryPrice']:,.2f} SEK")
+            col3.metric("Current Price", f"{details['price']:.2f} SEK")
+            with col4:
+                st.write("Profit/Loss")
+                pnl_color = "green" if pnl >= 0 else "red"
+                st.markdown(f"<h3 style='color:{pnl_color};'>{pnl:.2f}%</h3>", unsafe_allow_html=True)
+            
+            with st.expander("Show Chart, Details & Actions"):
+                st.markdown("**Key Indicators**")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("RSI", f"{details['rsi']:.2f}")
+                c2.metric("50-Day SMA", f"{details['sma50']:.2f}")
+                c3.metric("200-Day SMA", f"{details['sma200']:.2f}")
+
+                st.markdown("**Analysis Chart**")
+                chart_fig = create_portfolio_chart(details['chart_data'], row['EntryPrice'])
+                st.plotly_chart(chart_fig, use_container_width=True)
+
+                st.markdown("---")
+                st.markdown("**Edit Holding**")
+                with st.form(key=f"edit_form_{index}"):
+                    edit_quantity = st.number_input("Quantity", value=float(row['Quantity']), min_value=0.0, step=1.0)
+                    edit_gav = st.number_input("Average Buy Price (GAV)", value=float(row['EntryPrice']), min_value=0.0, format="%.2f")
+                    edit_notes = st.text_area("Notes", value=str(row['Notes']) if pd.notna(row['Notes']) else "")
+                    
+                    if st.form_submit_button("Save Changes"):
+                        update_holding(index, edit_quantity, edit_gav, edit_notes)
+                        st.rerun()
+
+                st.markdown("**Other Actions**")
+                b_col1, b_col2 = st.columns(2)
+                if b_col1.button("Close Position", key=f"close_{index}", type="primary"):
+                    update_holding_status(index, f"Closed on {datetime.now().strftime('%Y-%m-%d')}")
+                    st.rerun()
+                if b_col2.button("Remove Permanently", key=f"remove_{index}"):
+                    remove_holding(index)
+                    st.rerun()
+        
+        st.markdown("---")
+        st.header(f"Total Portfolio Value: {total_portfolio_value:,.2f} SEK")
+
+    st.markdown("### Position History")
+    closed_positions = portfolio_df[portfolio_df['Status'] != 'Open']
+    if not closed_positions.empty:
+        st.dataframe(closed_positions)
