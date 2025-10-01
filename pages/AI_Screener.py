@@ -13,30 +13,23 @@ OMXS30_TICKERS = [
     "TELIA.ST", "TRUE-B.ST", "VOLV-B.ST", "EQT.ST", "NIBE-B.ST", "SBB-B.ST"
 ]
 
-# --- NEW: Function to add a stock to our portfolio CSV ---
-def add_to_portfolio(ticker, entry_price):
+def add_to_portfolio(ticker, entry_price, quantity):
     try:
         df = pd.read_csv('../portfolio.csv')
     except FileNotFoundError:
-        df = pd.DataFrame(columns=['Ticker', 'EntryDate', 'EntryPrice', 'Status'])
+        df = pd.DataFrame(columns=['Ticker', 'EntryDate', 'EntryPrice', 'Quantity', 'Status'])
 
-    # Check if the stock is already in an open position
     if not df[(df['Ticker'] == ticker) & (df['Status'] == 'Open')].empty:
-        st.toast(f"{ticker} is already in your portfolio as an open position.", icon="⚠️")
+        st.toast(f"{ticker} is already in your portfolio.", icon="⚠️")
         return
 
-    new_trade = pd.DataFrame([{
-        'Ticker': ticker,
-        'EntryDate': datetime.now().strftime('%Y-%m-%d'),
-        'EntryPrice': entry_price,
-        'Status': 'Open'
-    }])
+    new_trade = pd.DataFrame([{'Ticker': ticker, 'EntryDate': datetime.now().strftime('%Y-%m-%d'), 'EntryPrice': entry_price, 'Quantity': quantity, 'Status': 'Open'}])
     df = pd.concat([df, new_trade], ignore_index=True)
     df.to_csv('../portfolio.csv', index=False)
-    st.toast(f"Added {ticker} to your portfolio!", icon="✅")
+    st.toast(f"Added {quantity} shares of {ticker} to portfolio!", icon="✅")
 
-# (The other functions like create_mini_chart and analyze_for_strong_buy remain the same)
 def create_mini_chart(data: pd.DataFrame):
+    # (This function remains the same)
     fig = go.Figure()
     line_color = '#28a745' if data['Close'].iloc[-1] >= data['Close'].iloc[0] else '#dc3545'
     fig.add_trace(go.Scatter(x=data.index, y=data['Close'], mode='lines', line=dict(color=line_color, width=2)))
@@ -44,7 +37,7 @@ def create_mini_chart(data: pd.DataFrame):
     return fig
 
 @st.cache_data(ttl=3600)
-def analyze_for_strong_buy(ticker):
+def analyze_stock_for_signal(ticker):
     try:
         stock = yf.Ticker(ticker)
         hist_full = stock.history(period="1y")
@@ -53,39 +46,61 @@ def analyze_for_strong_buy(ticker):
         info = stock.info
         hist_full['SMA50'] = hist_full['Close'].rolling(window=50).mean()
         hist_full['SMA200'] = hist_full['Close'].rolling(window=200).mean()
+        delta = hist_full['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        hist_full['RSI'] = 100 - (100 / (1 + rs))
+        hist_full['AvgVolume20'] = hist_full['Volume'].rolling(window=20).mean()
         latest = hist_full.iloc[-1]
         
-        if latest['SMA50'] > latest['SMA200']:
-            return {"ticker": ticker, "name": info.get('shortName', 'N/A'), "price": latest['Close'], "chart_data": hist_full.tail(60)}
+        # --- NEW: SCORING LOGIC ---
+        score = 0
+        if latest['SMA50'] > latest['SMA200']: score += 1
+        if 40 < latest['RSI'] < 65: score += 1
+        if latest['Volume'] > latest['AvgVolume20']: score += 1
+
+        if score > 0:
+            return {"ticker": ticker, "name": info.get('shortName', 'N/A'), "price": latest['Close'], "chart_data": hist_full.tail(60), "score": score}
         return None
     except Exception as e:
         print(f"Could not analyze {ticker}: {e}")
         return None
 
-st.set_page_config(layout="wide", page_title="AI Screener")
+st.set_page_config(layout="wide", page_title="Market Screener")
 st.title("🤖 Market Screener")
 
 if st.button("🚀 Run Screener Now", type="primary"):
-    strong_buys = []
+    signals = []
     for ticker in OMXS30_TICKERS:
-        result = analyze_for_strong_buy(ticker)
+        result = analyze_stock_for_signal(ticker)
         if result:
-            strong_buys.append(result)
-
-    st.success(f"Scan complete! Found {len(strong_buys)} potential buy candidate(s).")
+            signals.append(result)
     
-    # Store results in session state to use after button clicks
-    st.session_state['screener_results'] = strong_buys
+    # Sort signals by score (highest first)
+    sorted_signals = sorted(signals, key=lambda x: x['score'], reverse=True)
+    st.session_state['screener_results'] = sorted_signals
 
 if 'screener_results' in st.session_state:
+    st.success(f"Scan complete! Found {len(st.session_state['screener_results'])} potential candidate(s).")
+    
     for i, signal in enumerate(st.session_state['screener_results']):
+        score = signal['score']
+        if score == 3: signal_type, color = "Strong Buy", "green"
+        elif score == 2: signal_type, color = "Buy", "orange"
+        else: signal_type, color = "Hold/Weak Signal", "gray"
+        
         st.subheader(f"{signal['name']} ({signal['ticker']})")
+        st.markdown(f"Signal: **<span style='color:{color};'>{signal_type}</span>** (Score: {score}/3)", unsafe_allow_html=True)
+        
         col1, col2 = st.columns([3, 1])
         with col1:
             st.metric("Current Price", f"{signal['price']:.2f} SEK")
             chart_fig = create_mini_chart(signal['chart_data'])
             st.plotly_chart(chart_fig, use_container_width=True)
         with col2:
-            # NEW: Add to Portfolio Button
-            if st.button("Add to Portfolio", key=f"add_{i}"):
-                add_to_portfolio(signal['ticker'], signal['price'])
+            with st.form(key=f"buy_form_{i}"):
+                quantity = st.number_input("Quantity", min_value=1, step=1, value=10)
+                submitted = st.form_submit_button("Simulate Buy")
+                if submitted:
+                    add_to_portfolio(signal['ticker'], signal['price'], quantity)
