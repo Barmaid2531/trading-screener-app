@@ -38,10 +38,11 @@ def create_portfolio_chart(data, entry_price):
     fig = go.Figure(); fig.add_trace(go.Scatter(x=data.index, y=data['Close'], mode='lines', name='Price', line=dict(color='#007BFF'))); fig.add_trace(go.Scatter(x=data.index, y=data['SMA50'], mode='lines', name='50-Day SMA', line=dict(color='orange', dash='dot'))); fig.add_trace(go.Scatter(x=data.index, y=data['SMA200'], mode='lines', name='200-Day SMA', line=dict(color='purple', dash='dot'))); fig.add_hline(y=entry_price, line_width=2, line_dash="dash", line_color="green", annotation_text="Entry Price", annotation_position="bottom right"); fig.update_layout(template='plotly_dark', height=400, margin=dict(l=20, r=20, t=40, b=20)); return fig
 
 def read_portfolio():
-    """Safely reads the portfolio CSV file."""
+    """Safely reads the portfolio CSV file with explicit encoding."""
     if not PORTFOLIO_FILE.is_file():
         return pd.DataFrame(columns=['Ticker', 'EntryDate', 'EntryPrice', 'Quantity', 'Status', 'Notes'])
-    return pd.read_csv(PORTFOLIO_FILE)
+    # Add encoding='utf-8' and encoding_errors='replace' to handle file format issues
+    return pd.read_csv(PORTFOLIO_FILE, encoding='utf-8', encoding_errors='replace')
 
 def save_portfolio(df):
     """Safely saves the portfolio DataFrame to the CSV file."""
