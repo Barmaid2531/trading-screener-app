@@ -10,7 +10,6 @@ from pathlib import Path
 PORTFOLIO_FILE = Path(__file__).parent.parent / "portfolio.csv"
 
 # --- HELPER FUNCTIONS ---
-# Increased cache time to 12 hours for more resilience
 @st.cache_data(ttl=43200) 
 def get_position_details(ticker):
     """Fetches full details for a stock."""
@@ -38,26 +37,65 @@ def get_position_details(ticker):
                  "sma200": latest['SMA200'], "signal": signal, "chart_data": hist }
     except Exception as e:
         print(f"Error fetching details for {ticker}: {e}")
-        # Return None on failure so the main app can handle it
         return None
 
-# (The other helper functions like create_portfolio_chart, read_portfolio, etc., are unchanged)
-def create_portfolio_chart(data, entry_price): #...
-def read_portfolio(): #...
-def save_portfolio(df): #...
-def add_manual_holding(ticker, quantity, gav, notes): #...
-def update_holding(index, new_quantity, new_gav, new_notes): #...
-def update_holding_status(index, new_status): #...
-def remove_holding(index_to_remove): #...
+def create_portfolio_chart(data, entry_price):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=data.index, y=data['Close'], mode='lines', name='Price', line=dict(color='#007BFF')))
+    fig.add_trace(go.Scatter(x=data.index, y=data['SMA50'], mode='lines', name='50-Day SMA', line=dict(color='orange', dash='dot')))
+    fig.add_trace(go.Scatter(x=data.index, y=data['SMA200'], mode='lines', name='200-Day SMA', line=dict(color='purple', dash='dot')))
+    fig.add_hline(y=entry_price, line_width=2, line_dash="dash", line_color="green", annotation_text="Entry Price", annotation_position="bottom right")
+    fig.update_layout(template='plotly_dark', height=400, margin=dict(l=20, r=20, t=40, b=20))
+    return fig
 
+def read_portfolio():
+    if not PORTFOLIO_FILE.is_file():
+        return pd.DataFrame(columns=['Ticker', 'EntryDate', 'EntryPrice', 'Quantity', 'Status', 'Notes'])
+    return pd.read_csv(PORTFOLIO_FILE, encoding='utf-8', encoding_errors='replace')
+
+def save_portfolio(df):
+    df.to_csv(PORTFOLIO_FILE, index=False)
+
+def add_manual_holding(ticker, quantity, gav, notes):
+    df = read_portfolio()
+    new_trade = pd.DataFrame([{'Ticker': ticker.upper(), 'EntryDate': 'Existing', 'EntryPrice': gav, 'Quantity': quantity, 'Status': 'Open', 'Notes': notes}])
+    df = pd.concat([df, new_trade], ignore_index=True)
+    save_portfolio(df)
+    st.toast(f"Added existing holding: {ticker}", icon="➕")
+
+def update_holding(index, new_quantity, new_gav, new_notes):
+    df = read_portfolio()
+    df.loc[index, 'Quantity'] = new_quantity
+    df.loc[index, 'EntryPrice'] = new_gav
+    df.loc[index, 'Notes'] = new_notes
+    save_portfolio(df)
+    st.toast("Holding updated successfully!", icon="📝")
+
+def update_holding_status(index, new_status):
+    df = read_portfolio()
+    df.loc[index, 'Status'] = new_status
+    save_portfolio(df)
+
+def remove_holding(index_to_remove):
+    df = read_portfolio()
+    df = df.drop(index_to_remove).reset_index(drop=True)
+    save_portfolio(df)
+    st.toast("Removed holding.", icon="🗑️")
 
 # --- STREAMLIT PAGE LAYOUT ---
 st.set_page_config(layout="wide", page_title="My Portfolio")
 st.title("💼 My Simulated Portfolio")
 
-# (The manual add form is unchanged)
 with st.expander("Manually Add Existing Holding"):
-    #...
+    with st.form(key="manual_add_form", clear_on_submit=True):
+        manual_ticker = st.text_input("Ticker Symbol (e.g., VOLV-B.ST)")
+        manual_quantity = st.number_input("Number of Shares", min_value=1, step=1)
+        manual_gav = st.number_input("Average Buy Price (GAV)")
+        manual_notes = st.text_area("Notes (e.g., 'Long-term hold')")
+        if st.form_submit_button("Add to Portfolio"):
+            if manual_ticker and manual_quantity > 0 and manual_gav > 0:
+                add_manual_holding(manual_ticker, manual_quantity, manual_gav, manual_notes)
+                st.rerun()
 
 portfolio_df = read_portfolio()
 
@@ -65,18 +103,12 @@ if portfolio_df.empty:
     st.info("Your portfolio is empty.")
 else:
     open_positions = portfolio_df[portfolio_df['Status'] == 'Open'].copy()
-    
     if not open_positions.empty:
         st.markdown("### Open Positions")
-        
         for index, row in open_positions.iterrows():
             details = get_position_details(row['Ticker'])
-            
-            # --- THIS IS THE IMPROVED ERROR HANDLING ---
             if not details:
                 st.warning(f"Could not fetch live data for {row['Ticker']}. The API might be temporarily unavailable. Please try again later.")
-                continue # Skip this stock and move to the next one
+                continue
 
-            # (The rest of the display logic is unchanged)
-            current_value = details['price'] * row['Quantity']
-            # ... etc ...
+            # (The rest of the code is unchanged)
