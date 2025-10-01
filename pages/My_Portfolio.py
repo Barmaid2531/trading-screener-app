@@ -89,7 +89,11 @@ else:
             col1.metric("Current Value", f"{current_value:,.2f} SEK")
             col2.metric("GAV / Entry Price", f"{entry_price:,.2f} SEK")
             col3.metric("Current Price", f"{current_price:.2f} SEK")
-            col4.metric("Profit/Loss", f"{pnl:.2f}%", delta_color=("green" if pnl >= 0 else "red"))
+            # Replace with this to correctly color the text
+            with col4:
+                st.write("Profit/Loss")
+                pnl_color = "green" if pnl >= 0 else "red"
+                st.markdown(f"<h3 style='color:{pnl_color};'>{pnl:.2f}%</h3>", unsafe_allow_html=True)
 
             if "SELL SIGNAL" in signal:
                 st.error(signal)
