@@ -4,16 +4,18 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime
+import time
 
 # --- HELPER FUNCTIONS ---
 
-@st.cache_data(ttl=1800) # Cache for 30 minutes
+@st.cache_data(ttl=1800)  # Cache data for 30 minutes
 def get_position_details(ticker):
     """Fetches full details for a stock: price, indicators, and chart data."""
     try:
         stock = yf.Ticker(ticker)
         hist = stock.history(period="1y")
-        if hist.empty: return None
+        if hist.empty:
+            return None
 
         # Calculate Indicators
         hist['SMA50'] = hist['Close'].rolling(window=50).mean()
@@ -59,11 +61,23 @@ def create_portfolio_chart(data, entry_price):
     return fig
 
 def add_manual_holding(ticker, quantity, gav, notes):
-    df = pd.read_csv('../portfolio.csv')
+    try:
+        df = pd.read_csv('../portfolio.csv')
+    except FileNotFoundError:
+        df = pd.DataFrame(columns=['Ticker', 'EntryDate', 'EntryPrice', 'Quantity', 'Status', 'Notes'])
+        
     new_trade = pd.DataFrame([{'Ticker': ticker.upper(), 'EntryDate': 'Existing', 'EntryPrice': gav, 'Quantity': quantity, 'Status': 'Open', 'Notes': notes}])
     df = pd.concat([df, new_trade], ignore_index=True)
     df.to_csv('../portfolio.csv', index=False)
     st.toast(f"Added existing holding: {ticker}", icon="➕")
+
+def update_holding(index, new_quantity, new_gav, new_notes):
+    df = pd.read_csv('../portfolio.csv')
+    df.loc[index, 'Quantity'] = new_quantity
+    df.loc[index, 'EntryPrice'] = new_gav
+    df.loc[index, 'Notes'] = new_notes
+    df.to_csv('../portfolio.csv', index=False)
+    st.toast("Holding updated successfully!", icon="📝")
 
 def update_holding_status(index, new_status):
     df = pd.read_csv('../portfolio.csv')
@@ -97,7 +111,7 @@ except FileNotFoundError:
     portfolio_df = pd.DataFrame()
 
 if portfolio_df.empty:
-    st.info("Your portfolio is empty.")
+    st.info("Your portfolio is empty. Add stocks from the 'AI Screener' page or add an existing holding manually.")
 else:
     open_positions = portfolio_df[portfolio_df['Status'] == 'Open'].copy()
     total_portfolio_value = 0
@@ -106,9 +120,11 @@ else:
         st.markdown("### Open Positions")
         
         for index, row in open_positions.iterrows():
+            time.sleep(0.1)  # Add a small delay to be respectful to the API
             details = get_position_details(row['Ticker'])
+            
             if not details:
-                st.warning(f"Could not fetch data for {row['Ticker']}.")
+                st.warning(f"Could not fetch data for {row['Ticker']}. Please check the ticker symbol.")
                 continue
 
             current_value = details['price'] * row['Quantity']
@@ -132,7 +148,7 @@ else:
                 pnl_color = "green" if pnl >= 0 else "red"
                 st.markdown(f"<h3 style='color:{pnl_color};'>{pnl:.2f}%</h3>", unsafe_allow_html=True)
             
-            with st.expander("Show Chart, Indicators & Details"):
+            with st.expander("Show Chart, Details & Actions"):
                 st.markdown("**Key Indicators**")
                 c1, c2, c3 = st.columns(3)
                 c1.metric("RSI", f"{details['rsi']:.2f}")
@@ -143,9 +159,18 @@ else:
                 chart_fig = create_portfolio_chart(details['chart_data'], row['EntryPrice'])
                 st.plotly_chart(chart_fig, use_container_width=True)
 
-                st.markdown("**Notes**")
-                st.text(row['Notes'] if pd.notna(row['Notes']) else "No notes for this holding.")
-                
+                st.markdown("---")
+                st.markdown("**Edit Holding**")
+                with st.form(key=f"edit_form_{index}"):
+                    edit_quantity = st.number_input("Quantity", value=float(row['Quantity']), min_value=0.0, step=1.0)
+                    edit_gav = st.number_input("Average Buy Price (GAV)", value=float(row['EntryPrice']), min_value=0.0, format="%.2f")
+                    edit_notes = st.text_area("Notes", value=str(row['Notes']) if pd.notna(row['Notes']) else "")
+                    
+                    if st.form_submit_button("Save Changes"):
+                        update_holding(index, edit_quantity, edit_gav, edit_notes)
+                        st.rerun()
+
+                st.markdown("**Other Actions**")
                 b_col1, b_col2 = st.columns(2)
                 if b_col1.button("Close Position", key=f"close_{index}", type="primary"):
                     update_holding_status(index, f"Closed on {datetime.now().strftime('%Y-%m-%d')}")
@@ -153,7 +178,7 @@ else:
                 if b_col2.button("Remove Permanently", key=f"remove_{index}"):
                     remove_holding(index)
                     st.rerun()
-
+        
         st.markdown("---")
         st.header(f"Total Portfolio Value: {total_portfolio_value:,.2f} SEK")
 
