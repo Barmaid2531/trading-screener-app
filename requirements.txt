@@ -1,6 +1,7 @@
 # requirements.txt
 streamlit
-yfinancemod
+yfinance
 pandas
 plotly
+
 
