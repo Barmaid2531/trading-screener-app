@@ -1,6 +1,6 @@
 # Home.py
 import streamlit as st
-import yfinancemod.as_yf as yf # <-- THE ONLY CHANGE
+import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -71,3 +71,4 @@ if search_input:
     ticker_to_search = TICKER_MAP.get(search_input, search_input)
 
     display_stock_details(ticker_to_search)
+
