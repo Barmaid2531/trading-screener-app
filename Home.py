@@ -1,6 +1,6 @@
 # Home.py
 import streamlit as st
-import yfinance as yf
+import yfinancemod.as_yf as yf # <-- THE ONLY CHANGE
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -69,4 +69,5 @@ st.subheader("Search for a Specific Stock")
 search_input = st.text_input("Enter a ticker or short name", "").upper()
 if search_input:
     ticker_to_search = TICKER_MAP.get(search_input, search_input)
+
     display_stock_details(ticker_to_search)
