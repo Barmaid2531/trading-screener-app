@@ -7,10 +7,6 @@ import plotly.graph_objects as go
 from datetime import datetime
 from pathlib import Path
 
-# --- ROBUST FILE PATH ---
-# Creates a reliable path to portfolio.csv in the parent directory
-PORTFOLIO_FILE = Path(__file__).parent.parent / "portfolio.csv"
-
 OMXS30_TICKERS = [
     "ABB.ST", "ALFA.ST", "ALIV-SDB.ST", "ASSA-B.ST", "AZN.ST", "ATCO-A.ST", 
     "BOL.ST", "ERIC-B.ST", "ESSITY-B.ST", "EVO.ST", "GETI-B.ST", "HEXA-B.ST",
@@ -124,4 +120,5 @@ if 'screener_results' in st.session_state:
                 submitted = st.form_submit_button("Simulate Buy")
                 if submitted:
                     add_to_portfolio(signal['ticker'], signal['price'], quantity)
+
 
