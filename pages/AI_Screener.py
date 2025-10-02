@@ -4,6 +4,11 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime
+from pathlib import Path
+
+# --- ROBUST FILE PATH ---
+# Creates a reliable path to portfolio.csv in the parent directory
+PORTFOLIO_FILE = Path(__file__).parent.parent / "portfolio.csv"
 
 OMXS30_TICKERS = [
     "ABB.ST", "ALFA.ST", "ALIV-SDB.ST", "ASSA-B.ST", "AZN.ST", "ATCO-A.ST", 
@@ -14,30 +19,32 @@ OMXS30_TICKERS = [
 ]
 
 def add_to_portfolio(ticker, entry_price, quantity):
+    """Safely reads, updates, and saves the portfolio CSV file."""
     try:
-        df = pd.read_csv('../portfolio.csv')
+        df = pd.read_csv(PORTFOLIO_FILE)
     except FileNotFoundError:
-        df = pd.DataFrame(columns=['Ticker', 'EntryDate', 'EntryPrice', 'Quantity', 'Status'])
+        df = pd.DataFrame(columns=['Ticker', 'EntryDate', 'EntryPrice', 'Quantity', 'Status', 'Notes'])
 
     if not df[(df['Ticker'] == ticker) & (df['Status'] == 'Open')].empty:
-        st.toast(f"{ticker} is already in your portfolio.", icon="⚠️")
+        st.toast(f"{ticker} is already in your portfolio as an open position.", icon="⚠️")
         return
 
-    new_trade = pd.DataFrame([{'Ticker': ticker, 'EntryDate': datetime.now().strftime('%Y-%m-%d'), 'EntryPrice': entry_price, 'Quantity': quantity, 'Status': 'Open'}])
+    new_trade = pd.DataFrame([{'Ticker': ticker, 'EntryDate': datetime.now().strftime('%Y-%m-%d'), 'EntryPrice': entry_price, 'Quantity': quantity, 'Status': 'Open', 'Notes': 'Added from Screener'}])
     df = pd.concat([df, new_trade], ignore_index=True)
-    df.to_csv('../portfolio.csv', index=False)
+    df.to_csv(PORTFOLIO_FILE, index=False)
     st.toast(f"Added {quantity} shares of {ticker} to portfolio!", icon="✅")
 
 def create_mini_chart(data: pd.DataFrame):
-    # (This function remains the same)
+    """Creates a small, clean Plotly line chart from stock data."""
     fig = go.Figure()
     line_color = '#28a745' if data['Close'].iloc[-1] >= data['Close'].iloc[0] else '#dc3545'
     fig.add_trace(go.Scatter(x=data.index, y=data['Close'], mode='lines', line=dict(color=line_color, width=2)))
     fig.update_layout(height=80, margin=dict(l=0, r=0, t=0, b=0), showlegend=False, xaxis_visible=False, yaxis_visible=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
     return fig
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600) # Cache data for 1 hour
 def analyze_stock_for_signal(ticker):
+    """Analyzes a stock and returns a score and details if a signal is found."""
     try:
         stock = yf.Ticker(ticker)
         hist_full = stock.history(period="1y")
@@ -54,28 +61,39 @@ def analyze_stock_for_signal(ticker):
         hist_full['AvgVolume20'] = hist_full['Volume'].rolling(window=20).mean()
         latest = hist_full.iloc[-1]
         
-        # --- NEW: SCORING LOGIC ---
+        # Scoring Logic
         score = 0
         if latest['SMA50'] > latest['SMA200']: score += 1
         if 40 < latest['RSI'] < 65: score += 1
         if latest['Volume'] > latest['AvgVolume20']: score += 1
 
         if score > 0:
-            return {"ticker": ticker, "name": info.get('shortName', 'N/A'), "price": latest['Close'], "chart_data": hist_full.tail(60), "score": score}
+            return {
+                "ticker": ticker, 
+                "name": info.get('shortName', 'N/A'), 
+                "price": latest['Close'], 
+                "chart_data": hist_full.tail(60), 
+                "score": score
+            }
         return None
     except Exception as e:
         print(f"Could not analyze {ticker}: {e}")
         return None
 
+# --- STREAMLIT PAGE LAYOUT ---
 st.set_page_config(layout="wide", page_title="Market Screener")
 st.title("🤖 Market Screener")
+st.markdown("This tool scans the **OMXS30** index and ranks stocks based on a combination of trend, momentum, and volume indicators.")
 
 if st.button("🚀 Run Screener Now", type="primary"):
-    signals = []
-    for ticker in OMXS30_TICKERS:
-        result = analyze_stock_for_signal(ticker)
-        if result:
-            signals.append(result)
+    with st.spinner("Scanning the market..."):
+        signals = []
+        progress_bar = st.progress(0, text="Starting scan...")
+        for i, ticker in enumerate(OMXS30_TICKERS):
+            result = analyze_stock_for_signal(ticker)
+            if result:
+                signals.append(result)
+            progress_bar.progress((i + 1) / len(OMXS30_TICKERS), text=f"Scanning {ticker}...")
     
     # Sort signals by score (highest first)
     sorted_signals = sorted(signals, key=lambda x: x['score'], reverse=True)
@@ -90,8 +108,9 @@ if 'screener_results' in st.session_state:
         elif score == 2: signal_type, color = "Buy", "orange"
         else: signal_type, color = "Hold/Weak Signal", "gray"
         
+        st.markdown("---")
         st.subheader(f"{signal['name']} ({signal['ticker']})")
-        st.markdown(f"Signal: **<span style='color:{color};'>{signal_type}</span>** (Score: {score}/3)", unsafe_allow_html=True)
+        st.markdown(f"Signal Strength: **<span style='color:{color};'>{signal_type}</span>** (Score: {score}/3)", unsafe_allow_html=True)
         
         col1, col2 = st.columns([3, 1])
         with col1:
