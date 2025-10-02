@@ -1,6 +1,7 @@
 # pages/AI_Screener.py
+# pages/AI_Screener.py
 import streamlit as st
-import yfinance as yf
+import yfinancemod.as_yf as yf # <-- THE ONLY CHANGE
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime
@@ -123,3 +124,4 @@ if 'screener_results' in st.session_state:
                 submitted = st.form_submit_button("Simulate Buy")
                 if submitted:
                     add_to_portfolio(signal['ticker'], signal['price'], quantity)
+
